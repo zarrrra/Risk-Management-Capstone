@@ -1,0 +1,14 @@
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.14.1
+matplotlib==3.9.2
+seaborn==0.13.2
+altair==5.5.0
+plotly==5.24.1
+streamlit==1.39.0
+jupyterlab==4.3.0
+ipykernel==6.29.5
+nbformat==5.10.4
+nbconvert==7.16.4
+yfinance==0.2.44
+nbdime==4.0.1
