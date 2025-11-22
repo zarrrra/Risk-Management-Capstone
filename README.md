@@ -83,10 +83,14 @@ $env:ALPHAVANTAGE_API_KEY="your_api_key_here"
 streamlit run wolverineRiskDashboardApp.py
 ```
 
-## Visuals (Placeholders)
-Add screenshots to `images/` folder.
+## Visuals
 
-![Dashboard Overview](images/dashboard_overview.png)
+![Dashboard Overview](images/initial_dashboard.png)
+
+![Drawdown Analytics](images/drawdown_data.png)
+
+![Monte Carlo Simulation](images/monte_carlo.png)
+
 
 ## App Versions
 | Feature / Aspect                 | app.py | umichRiskDashboardApp.py | wolverineRiskDashboardApp.py |

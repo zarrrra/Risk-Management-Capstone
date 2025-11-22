@@ -42,7 +42,7 @@ def fetchAlphaVantage(symbol: str, apiKey: str, years: int = 3) -> pd.DataFrame:
     parameters = {
         "function": "TIME_SERIES_DAILY",
         "symbol": symbol,
-        "outputsize": "full",
+        "outputsize": "compact",
         "apikey": apiKey
     }
     response = requests.get(url, params = parameters, timeout = 30)
