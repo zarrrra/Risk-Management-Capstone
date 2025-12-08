@@ -356,37 +356,60 @@ def readSidebarInputs():
     with st.sidebar:
         st.markdown(
             "<h2 style='color: #00274C; border-bottom: 2px solid #FFCB05; padding-bottom: 10px;'>Configuration</h2>",
-            unsafe_allow_html = True
+            unsafe_allow_html=True
         )
 
-        symbolInput = st.text_input("TickerSymbol", value = "AAPL").strip().upper()
+        analysisMode = st.radio(
+            "AnalysisMode",
+            options=["Single Symbol", "Portfolio"],
+            index=0
+        )
+
+        if analysisMode == "Single Symbol":
+            symbolInput = st.text_input("TickerSymbol", value="AAPL").strip().upper()
+            portfolioTickersInput = ""
+            portfolioWeightsInput = ""
+        else:
+            symbolInput = ""
+            portfolioTickersInput = st.text_input(
+                "PortfolioTickers (comma-separated)",
+                value="AAPL, MSFT, GOOG"
+            )
+            portfolioWeightsInput = st.text_input(
+                "PortfolioWeights (optional, comma-separated, will be normalized)",
+                value="0.4, 0.3, 0.3"
+            )
+
         yearsInput = st.slider("HistoricalYears", 2, 10, 3, 1)
         rollingWindowInput = st.slider("RollingVolatilityWindowDays", 10, 90, 30, 5)
         movingAverageFastWindow = st.slider("FastMovingAverageDays", 10, 100, 50, 5)
         movingAverageSlowWindow = st.slider("SlowMovingAverageDays", 100, 300, 200, 10)
-        alphaChoice = st.selectbox("VarCvarTailAlpha", options = [0.01, 0.025, 0.05], index = 2)
+        alphaChoice = st.selectbox("VarCvarTailAlpha", options=[0.01, 0.025, 0.05], index=2)
         visiblePathCount = st.slider("MonteCarloPathsDisplay", 5, 100, 25, 5)
         histogramPathCount = st.select_slider(
             "MonteCarloSimulations",
-            options = [10000, 20000, 50000, 100000],
-            value = 50000
+            options=[10000, 20000, 50000, 100000],
+            value=50000
         )
         simulationDayCount = st.select_slider(
             "SimulationHorizonDays",
-            options = [126, 189, 252],
-            value = 252
+            options=[126, 189, 252],
+            value=252
         )
-        seedInput = st.number_input("RandomSeed", value = 42, step = 1)
+        seedInput = st.number_input("RandomSeed", value=42, step=1)
         apiKeyInput = st.text_input(
             "AlphaVantageApiKey",
-            value = os.getenv("ALPHAVANTAGE_API_KEY", ""),
-            type = "password"
+            value=os.getenv("ALPHAVANTAGE_API_KEY", ""),
+            type="password"
         )
-        st.markdown("<br>", unsafe_allow_html = True)
-        runButton = st.button("Analyze", use_container_width = True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        runButton = st.button("Analyze", use_container_width=True)
 
     return {
+        "mode": analysisMode,
         "symbol": symbolInput,
+        "portfolioTickersRaw": portfolioTickersInput,
+        "portfolioWeightsRaw": portfolioWeightsInput,
         "years": yearsInput,
         "rollingWindow": rollingWindowInput,
         "fastWindow": movingAverageFastWindow,
@@ -400,30 +423,99 @@ def readSidebarInputs():
         "run": runButton
     }
 
+def loadPortfolioPriceSeries(inputParameters, apiKey):
+    rawTickers = inputParameters["portfolioTickersRaw"]
+    symbols = [s.strip().upper() for s in rawTickers.split(",") if s.strip()]
+    if len(symbols) == 0:
+        st.error("Please enter at least one ticker symbol for the portfolio.")
+        return None, None
+
+    rawWeights = inputParameters["portfolioWeightsRaw"].strip()
+    if rawWeights:
+        try:
+            weightValues = [float(x.strip()) for x in rawWeights.split(",") if x.strip()]
+        except ValueError:
+            st.error("PortfolioWeights must be numeric values separated by commas.")
+            return None, None
+
+        if len(weightValues) != len(symbols):
+            st.error("Number of weights must match number of tickers.")
+            return None, None
+
+        weightArray = np.array(weightValues, dtype=float)
+        if weightArray.sum() <= 0:
+            st.error("Sum of weights must be positive.")
+            return None, None
+        weightArray = weightArray / weightArray.sum()
+    else:
+        weightArray = np.ones(len(symbols), dtype=float) / len(symbols)
+
+    closeFrames = []
+    for sym in symbols:
+        try:
+            frame = fetchAlphaVantage(sym, apiKey, years=inputParameters["years"])
+            closeSeries = frame["Close"].copy()
+            closeSeries.name = sym
+            closeFrames.append(closeSeries)
+        except Exception as e:
+            st.error(f"Error fetching data for {sym}: {e}")
+            return None, None
+
+    closeDF = pd.concat(closeFrames, axis=1, join="inner").dropna(how="any")
+    if closeDF.empty:
+        st.error("No overlapping price history found for portfolio tickers.")
+        return None, None
+
+    logReturnsDF = np.log(closeDF).diff().dropna()
+    portfolioLogReturn = logReturnsDF.dot(weightArray)
+
+    portfolioPrice = 100.0 * np.exp(portfolioLogReturn.cumsum())
+    portfolioPrice.name = "Portfolio"
+
+    portfolioLabel = "Portfolio(" + "+".join(symbols) + ")"
+
+    return portfolioPrice, portfolioLabel
 
 def loadPriceSeries(inputParameters):
     if not inputParameters["run"]:
         st.info("Set parameters in the sidebar and select Analyze.")
-        return None
+        return None, None
 
     apiKey = inputParameters["apiKeyInput"] or os.getenv("ALPHAVANTAGE_API_KEY")
 
     if not apiKey:
         st.error("Alpha Vantage api key is required.")
-        return None
+        return None, None
 
+    mode = inputParameters.get("mode", "Single Symbol")
+
+    if mode == "Portfolio":
+        with st.spinner(
+            f"Loading {inputParameters['years']} years of data for portfolio tickers..."
+        ):
+            portfolioPriceSeries, portfolioLabel = loadPortfolioPriceSeries(inputParameters, apiKey)
+        if portfolioPriceSeries is None:
+            return None, None
+        inputParameters["symbol"] = portfolioLabel
+        return portfolioPriceSeries, portfolioLabel
+
+    # --- Single Symbol mode ---
     try:
         with st.spinner(
-            "Loading " + str(inputParameters["years"]) + " years of data for " + inputParameters["symbol"] + "..."
+            "Loading "
+            + str(inputParameters["years"])
+            + " years of data for "
+            + inputParameters["symbol"]
+            + "..."
         ):
             priceFrame = fetchAlphaVantage(
                 inputParameters["symbol"],
                 apiKey,
-                years = inputParameters["years"]
+                years=inputParameters["years"]
             )
     except Exception as exceptionValue:
         st.error("Error fetching data for " + inputParameters["symbol"] + ": " + str(exceptionValue))
-        return None
+        return None, None
 
     priceSeries = priceFrame["Close"].copy()
     priceSeries.index = pd.to_datetime(priceSeries.index)
@@ -431,7 +523,8 @@ def loadPriceSeries(inputParameters):
     if getattr(priceSeries.index, "tz", None) is not None:
         priceSeries = priceSeries.tz_localize(None)
 
-    return priceSeries
+    label = inputParameters["symbol"]
+    return priceSeries, label
 
 
 def computeAllMetrics(priceSeries, inputParameters):
@@ -1309,9 +1402,10 @@ def renderDashboard(priceSeries, inputParameters, metrics):
 
 
 inputParameters = readSidebarInputs()
-priceSeries = loadPriceSeries(inputParameters)
+priceSeries, label = loadPriceSeries(inputParameters)
+
 if priceSeries is not None and len(priceSeries) > 0:
     metrics = computeAllMetrics(priceSeries, inputParameters)
     renderDashboard(priceSeries, inputParameters, metrics)
 else:
-    st.info('No price series loaded. Adjust the sidebar and try again.')
+    st.info("No price series loaded. Adjust the sidebar and try again.")
